@@ -11,8 +11,7 @@ st.set_page_config(page_title="Brand Reputation Dashboard 2023", layout="wide")
 
 # 2. Hugging Face API Setup
 API_URL = "https://api-inference.huggingface.co/models/distilbert-base-uncased-finetuned-sst-2-english"
-# PROSIM: Preveri, da je tukaj tvoj novi žeton
-HF_TOKEN = "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" 
+HF_TOKEN = "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" 
 headers = {"Authorization": f"Bearer {HF_TOKEN}"}
 
 def get_hybrid_sentiment(text, rating):
