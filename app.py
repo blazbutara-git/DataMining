@@ -1,99 +1,127 @@
-import torch
 import streamlit as st
 import pandas as pd
-from transformers import pipeline
+import requests
 import matplotlib.pyplot as plt
+from wordcloud import WordCloud
+import time
 
-# Set page title and layout
+# 1. Page Configuration
 st.set_page_config(page_title="Brand Reputation Dashboard 2023", layout="wide")
 
-# Load data and cache it for performance
+# 2. Hugging Face API Setup
+ENDPOINTS = [
+    "https://router.huggingface.co/hf-inference/models/cardiffnlp/twitter-roberta-base-sentiment-latest",
+    "https://api-inference.huggingface.co/models/cardiffnlp/twitter-roberta-base-sentiment-latest"
+]
+HF_TOKEN = "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"
+headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+
+def get_single_sentiment(text):
+    """Fetches sentiment with automatic fallback between endpoints"""
+    payload = {"inputs": text, "options": {"wait_for_model": True}}
+    
+    for url in ENDPOINTS:
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=15)
+            if response.status_code == 200:
+                result = response.json()
+                if isinstance(result, list) and len(result) > 0:
+                    data = result[0] if isinstance(result[0], list) else result
+                    top_result = max(data, key=lambda x: x['score'])
+                    return top_result['label'].upper(), top_result['score']
+            elif response.status_code == 503:
+                return "LOADING", 0.0
+            continue 
+        except Exception:
+            continue
+    return "OFFLINE", 0.0
+
+# 3. Data Loading
 @st.cache_data
 def load_data():
-    df = pd.read_csv("scraped_data.csv")
-    # Convert date to datetime objects (Data Cleaning Part)
-    df['date'] = pd.to_datetime(df['date'], errors='coerce')
-    return df
+    try:
+        df = pd.read_csv("scraped_data.csv")
+        df['date'] = pd.to_datetime(df['date'], errors='coerce')
+        return df
+    except Exception as e:
+        st.error(f"Error loading CSV: {e}")
+        return pd.DataFrame()
 
-# Load Hugging Face model and cache it (Part 3)
-@st.cache_resource
-def load_sentiment_model():
-    # Specific model requested: distilbert-base-uncased-finetuned-sst-2-english
-    return pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
-
-# Initialize data and model
 df = load_data()
-sentiment_analyzer = load_sentiment_model()
 
 # --- SIDEBAR NAVIGATION ---
-st.sidebar.title("Navigation")
-page = st.sidebar.radio("Select Section:", ["Products", "Testimonials", "Reviews"])
+st.sidebar.title("Brand Dashboard")
+page = st.sidebar.radio("Navigation:", ["Products", "Testimonials", "Reviews"])
 
-# --- SECTION 1: PRODUCTS ---
 if page == "Products":
-    st.header("🛒 Scraped Products")
-    st.write("List of products extracted from the sandbox environment.")
+    st.header("🛒 Product List")
     product_df = df[df['category'] == 'Product'][['text']]
     st.dataframe(product_df, use_container_width=True)
 
-# --- SECTION 2: TESTIMONIALS ---
 elif page == "Testimonials":
     st.header("💬 Customer Testimonials")
-    st.write("General feedback and star ratings.")
     testimonial_df = df[df['category'] == 'Testimonial'][['text', 'rating']]
-    
-    # Display testimonials in a clean table
-    st.table(testimonial_df.head(20))
+    st.table(testimonial_df)
 
-# --- SECTION 3: REVIEWS & SENTIMENT ANALYSIS ---
 elif page == "Reviews":
-    st.header("🔍 Sentiment Analysis of Reviews (2023)")
+    st.header("🔍 Sentiment Analysis (2023)")
     
-    # Month slider (1 = January, 12 = December)
     months = ["January", "February", "March", "April", "May", "June", 
               "July", "August", "September", "October", "November", "December"]
+    selected_month = st.select_slider("Select month:", options=range(1, 13), format_func=lambda x: months[x-1])
     
-    selected_month_num = st.select_slider(
-        "Select a month to analyze:",
-        options=range(1, 13),
-        format_func=lambda x: months[x-1]
-    )
-    
-    # Filter reviews by category and selected month
-    review_df = df[(df['category'] == 'Review') & (df['date'].dt.month == selected_month_num)].copy()
+    review_df = df[(df['category'] == 'Review') & (df['date'].dt.month == selected_month)].copy()
     
     if not review_df.empty:
-        # Run Sentiment Analysis
-        with st.spinner('AI is analyzing sentiment...'):
-            texts = review_df['text'].tolist()
-            # Perform inference
-            results = sentiment_analyzer(texts, truncation=True)
-            
-            # Add results back to dataframe
-            review_df['Sentiment'] = [res['label'] for res in results]
-            review_df['Confidence'] = [res['score'] for res in results]
+        # Cleanup: Remove time from date for display
+        review_df['date'] = review_df['date'].dt.date
         
-        # UI layout with columns
-        col1, col2 = st.columns([2, 1])
+        st.write(f"Reviews found: {len(review_df)}")
         
-        with col1:
-            st.subheader(f"Reviews for {months[selected_month_num-1]} 2023")
-            st.dataframe(review_df[['date', 'text', 'rating', 'Sentiment', 'Confidence']], use_container_width=True)
+        if st.button("Run AI Analysis"):
+            sentiments = []
+            scores = []
+            bar = st.progress(0)
+            msg = st.empty()
             
-        with col2:
-            st.subheader("Sentiment Distribution")
-            sentiment_counts = review_df['Sentiment'].value_counts()
+            for i, row in enumerate(review_df['text']):
+                msg.text(f"Processing {i+1}/{len(review_df)}...")
+                label, score = get_single_sentiment(str(row))
+                
+                if label == "LOADING":
+                    msg.warning("Model is waking up... retrying in 10s.")
+                    time.sleep(10)
+                    label, score = get_single_sentiment(str(row))
+                
+                sentiments.append(label)
+                scores.append(score)
+                bar.progress((i + 1) / len(review_df))
             
-            # Simple Matplotlib Bar Chart
-            fig, ax = plt.subplots()
-            colors = ['#2ecc71' if label == 'POSITIVE' else '#e74c3c' for label in sentiment_counts.index]
-            sentiment_counts.plot(kind='bar', color=colors, ax=ax)
-            ax.set_ylabel("Number of Reviews")
-            st.pyplot(fig)
-            
-            # Metrics
-            avg_rating = review_df['rating'].mean()
-            st.metric("Average Star Rating", f"{avg_rating:.1f} / 5")
-    else:
+            review_df['Sentiment'] = sentiments
+            review_df['Confidence'] = scores
+            msg.success("Analysis Complete!")
 
-        st.info(f"No reviews found for {months[selected_month_num-1]} 2023.")
+            c1, c2 = st.columns([2, 1])
+            with c1:
+                st.subheader(f"Review Details - {months[selected_month-1]}")
+                # Added 'rating' back to the columns list
+                st.dataframe(review_df[['date', 'text', 'rating', 'Sentiment', 'Confidence']], use_container_width=True)
+            with c2:
+                st.subheader("Sentiment Distribution")
+                counts = review_df['Sentiment'].value_counts()
+                if not counts.empty:
+                    fig, ax = plt.subplots()
+                    color_map = {'POSITIVE': '#2ecc71', 'NEGATIVE': '#e74c3c', 'NEUTRAL': '#f1c40f'}
+                    colors = [color_map.get(l, '#95a5a6') for l in counts.index]
+                    counts.plot(kind='bar', color=colors, ax=ax)
+                    st.pyplot(fig)
+                st.metric("Avg Star Rating", f"{review_df['rating'].mean():.1f}")
+
+            st.divider()
+            st.subheader("Word Cloud")
+            all_text = " ".join(review_df['text'].astype(str))
+            if len(all_text) > 10:
+                wc = WordCloud(background_color="white", width=800, height=400).generate(all_text)
+                st.image(wc.to_array(), use_container_width=True)
+    else:
+        st.info("No reviews for this month.")
