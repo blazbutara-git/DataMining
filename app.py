@@ -5,13 +5,15 @@ import matplotlib.pyplot as plt
 from wordcloud import WordCloud
 import time
 import random
+import os
+import streamlit as st
 
 # 1. Page Configuration
 st.set_page_config(page_title="Brand Reputation Dashboard 2023", layout="wide")
 
 # 2. Hugging Face API Setup
 API_URL = "https://api-inference.huggingface.co/models/distilbert-base-uncased-finetuned-sst-2-english"
-HF_TOKEN = "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" 
+HF_TOKEN = os.getenv("HF_TOKEN")
 headers = {"Authorization": f"Bearer {HF_TOKEN}"}
 
 def get_hybrid_sentiment(text, rating):
@@ -129,3 +131,4 @@ elif page == "Reviews":
                 st.image(wc.to_array(), use_container_width=True)
     else:
         st.info("No reviews for this month.")
+
