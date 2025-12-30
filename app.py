@@ -1,3 +1,4 @@
+import torch
 import streamlit as st
 import pandas as pd
 from transformers import pipeline
@@ -94,4 +95,5 @@ elif page == "Reviews":
             avg_rating = review_df['rating'].mean()
             st.metric("Average Star Rating", f"{avg_rating:.1f} / 5")
     else:
+
         st.info(f"No reviews found for {months[selected_month_num-1]} 2023.")
